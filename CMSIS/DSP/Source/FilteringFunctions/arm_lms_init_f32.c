@@ -1,0 +1,81 @@
+                                                                         
+                                  
+                                   
+                                                                  
+  
+                               
+                       
+  
+                                   
+                                                                          
+/*
+ * Copyright (C) 2010-2019 ARM Limited or its affiliates. All rights reserved.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Licensed under the Apache License, Version 2.0 (the License); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an AS IS BASIS, WITHOUT
+ * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+#include "arm_math.h"
+
+   
+                 
+    
+   
+
+   
+                                                                       
+                                                                                            
+                                                         
+                                                        
+                                                  
+                                                                              
+                                                        
+                     
+
+                        
+                                                                                                                 
+       
+                                                          
+        
+                                                                                                     
+                                                                                                                                                                                                                               
+   
+
+void arm_lms_init_f32(
+  arm_lms_instance_f32 * S,
+  uint16_t numTaps,
+  float32_t * pCoeffs,
+  float32_t * pState,
+  float32_t mu,
+  uint32_t blockSize)
+{
+                          
+  S->numTaps = numTaps;
+
+                                  
+  S->pCoeffs = pCoeffs;
+
+                                                                 
+  memset(pState, 0, (numTaps + (blockSize - 1)) * sizeof(float32_t));
+
+                            
+  S->pState = pState;
+
+                              
+  S->mu = mu;
+}
+
+   
+                     
+   

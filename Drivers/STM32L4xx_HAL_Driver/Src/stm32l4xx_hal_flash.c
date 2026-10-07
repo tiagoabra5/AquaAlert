@@ -1,0 +1,764 @@
+/**
+  ******************************************************************************
+  * @file    stm32l4xx_hal_flash.c
+  * @author  MCD Application Team
+  * @brief   FLASH HAL module driver.
+  *          This file provides firmware functions to manage the following
+  *          functionalities of the internal FLASH memory:
+  *           + Program operations functions
+  *           + Memory Control functions
+  *           + Peripheral Errors functions
+  *
+ @verbatim
+  ==============================================================================
+                        ##### FLASH peripheral features #####
+  ==============================================================================
+
+  [..] The Flash memory interface manages CPU AHB I-Code and D-Code accesses
+       to the Flash memory. It implements the erase and program Flash memory operations
+       and the read and write protection mechanisms.
+
+  [..] The Flash memory interface accelerates code execution with a system of instruction
+       prefetch and cache lines.
+
+  [..] The FLASH main features are:
+      (+) Flash memory read operations
+      (+) Flash memory program/erase operations
+      (+) Read / write protections
+      (+) Option bytes programming
+      (+) Prefetch on I-Code
+      (+) 32 cache lines of 4*64 bits on I-Code
+      (+) 8 cache lines of 4*64 bits on D-Code
+      (+) Error code correction (ECC) : Data in flash are 72-bits word
+          (8 bits added per double word)
+
+
+                        ##### How to use this driver #####
+ ==============================================================================
+    [..]
+      This driver provides functions and macros to configure and program the FLASH
+      memory of all STM32L4xx devices.
+
+      (#) Flash Memory IO Programming functions:
+           (++) Lock and Unlock the FLASH interface using HAL_FLASH_Unlock() and
+                HAL_FLASH_Lock() functions
+           (++) Program functions: double word and fast program (full row programming)
+           (++) There Two modes of programming :
+            (+++) Polling mode using HAL_FLASH_Program() function
+            (+++) Interrupt mode using HAL_FLASH_Program_IT() function
+
+      (#) Interrupts and flags management functions :
+           (++) Handle FLASH interrupts by calling HAL_FLASH_IRQHandler()
+           (++) Callback functions are called when the flash operations are finished :
+                HAL_FLASH_EndOfOperationCallback() when everything is ok, otherwise
+                HAL_FLASH_OperationErrorCallback()
+           (++) Get error flag status by calling HAL_GetError()
+
+      (#) Option bytes management functions :
+           (++) Lock and Unlock the option bytes using HAL_FLASH_OB_Unlock() and
+                HAL_FLASH_OB_Lock() functions
+           (++) Launch the reload of the option bytes using HAL_FLASH_Launch() function.
+                In this case, a reset is generated
+
+    [..]
+      In addition to these functions, this driver includes a set of macros allowing
+      to handle the following operations:
+       (+) Set the latency
+       (+) Enable/Disable the prefetch buffer
+       (+) Enable/Disable the Instruction cache and the Data cache
+       (+) Reset the Instruction cache and the Data cache
+       (+) Enable/Disable the Flash power-down during low-power run and sleep modes
+       (+) Enable/Disable the Flash interrupts
+       (+) Monitor the Flash flags status
+
+ @endverbatim
+  ******************************************************************************
+  * @attention
+  *
+  * Copyright (c) 2017 STMicroelectronics.
+  * All rights reserved.
+  *
+  * This software is licensed under terms that can be found in the LICENSE file in
+  * the root directory of this software component.
+  * If no LICENSE file comes with this software, it is provided AS-IS.
+  ******************************************************************************
+  */
+
+                                                                                
+#include "stm32l4xx_hal.h"
+
+                                    
+      
+    
+
+                         
+                                  
+      
+    
+
+#ifdef HAL_FLASH_MODULE_ENABLED
+
+                                                                                
+                                                                                
+#if defined (STM32L4P5xx) || defined (STM32L4Q5xx) || defined (STM32L4R5xx) || defined (STM32L4R7xx) || defined (STM32L4R9xx) || defined (STM32L4S5xx) || defined (STM32L4S7xx) || defined (STM32L4S9xx)
+#define FLASH_NB_DOUBLE_WORDS_IN_ROW  64
+#else
+#define FLASH_NB_DOUBLE_WORDS_IN_ROW  32
+#endif
+                                                                                
+                                                                                
+                                                             
+     
+   
+   
+                                                                      
+    
+FLASH_ProcessTypeDef pFlash = {.Lock = HAL_UNLOCKED, \
+                               .ErrorCode = HAL_FLASH_ERROR_NONE, \
+                               .ProcedureOnGoing = FLASH_PROC_NONE, \
+                               .Address = 0U, \
+                               .Bank = FLASH_BANK_1, \
+                               .Page = 0U, \
+                               .NbPagesToErase = 0U, \
+                               .CacheToReactivate = FLASH_CACHE_DISABLED};
+   
+      
+    
+
+                                                                                
+                                                             
+     
+   
+static void          FLASH_Program_DoubleWord(uint32_t Address, uint64_t Data);
+static void          FLASH_Program_Fast(uint32_t Address, uint32_t DataAddress);
+   
+      
+    
+
+                                                                                
+                                                               
+      
+    
+
+                                                                             
+                                            
+  
+         
+                                                                                
+                                                             
+                                                                                
+        
+                                                                            
+                       
+
+            
+      
+    
+
+   
+                                                                                
+                                                                            
+                                                                                      
+                                                            
+                                                    
+                                                                                               
+                                                               
+   
+                                        
+    
+HAL_StatusTypeDef HAL_FLASH_Program(uint32_t TypeProgram, uint32_t Address, uint64_t Data)
+{
+  HAL_StatusTypeDef status;
+  uint32_t prog_bit = 0;
+
+                      
+  __HAL_LOCK(&pFlash);
+
+                            
+  assert_param(IS_FLASH_TYPEPROGRAM(TypeProgram));
+
+                                               
+  status = FLASH_WaitForLastOperation((uint32_t)FLASH_TIMEOUT_VALUE);
+
+  if(status == HAL_OK)
+  {
+    pFlash.ErrorCode = HAL_FLASH_ERROR_NONE;
+
+                                                                                   
+    if(READ_BIT(FLASH->ACR, FLASH_ACR_DCEN) != 0U)
+    {
+                               
+      __HAL_FLASH_DATA_CACHE_DISABLE();
+      pFlash.CacheToReactivate = FLASH_CACHE_DCACHE_ENABLED;
+    }
+    else
+    {
+      pFlash.CacheToReactivate = FLASH_CACHE_DISABLED;
+    }
+
+    if(TypeProgram == FLASH_TYPEPROGRAM_DOUBLEWORD)
+    {
+                                                               
+      FLASH_Program_DoubleWord(Address, Data);
+      prog_bit = FLASH_CR_PG;
+    }
+    else if((TypeProgram == FLASH_TYPEPROGRAM_FAST) || (TypeProgram == FLASH_TYPEPROGRAM_FAST_AND_LAST))
+    {
+                                                                             
+      FLASH_Program_Fast(Address, (uint32_t)Data);
+
+                                                                                      
+      if(TypeProgram == FLASH_TYPEPROGRAM_FAST_AND_LAST)
+      {
+        prog_bit = FLASH_CR_FSTPG;
+      }
+    }
+    else
+    {
+                         
+    }
+
+                                                 
+    status = FLASH_WaitForLastOperation((uint32_t)FLASH_TIMEOUT_VALUE);
+
+                                                                            
+    if (prog_bit != 0U)
+    {
+      CLEAR_BIT(FLASH->CR, prog_bit);
+    }
+
+                                                             
+    FLASH_FlushCaches();
+  }
+
+                        
+  __HAL_UNLOCK(&pFlash);
+
+  return status;
+}
+
+   
+                                                                                                       
+                                                                            
+                                                                                      
+                                                            
+                                                    
+                                                                                               
+                                                               
+   
+                      
+    
+HAL_StatusTypeDef HAL_FLASH_Program_IT(uint32_t TypeProgram, uint32_t Address, uint64_t Data)
+{
+  HAL_StatusTypeDef status = HAL_OK;
+
+                            
+  assert_param(IS_FLASH_TYPEPROGRAM(TypeProgram));
+
+                      
+  __HAL_LOCK(&pFlash);
+
+  pFlash.ErrorCode = HAL_FLASH_ERROR_NONE;
+
+                                                                                 
+  if(READ_BIT(FLASH->ACR, FLASH_ACR_DCEN) != 0U)
+  {
+                             
+    __HAL_FLASH_DATA_CACHE_DISABLE();
+    pFlash.CacheToReactivate = FLASH_CACHE_DCACHE_ENABLED;
+  }
+  else
+  {
+    pFlash.CacheToReactivate = FLASH_CACHE_DISABLED;
+  }
+
+                                                      
+  if(TypeProgram == FLASH_TYPEPROGRAM_FAST_AND_LAST)
+  {
+    pFlash.ProcedureOnGoing = FLASH_PROC_PROGRAM_LAST;
+  }
+  else
+  {
+    pFlash.ProcedureOnGoing = FLASH_PROC_PROGRAM;
+  }
+  pFlash.Address = Address;
+
+                                                    
+  __HAL_FLASH_ENABLE_IT(FLASH_IT_EOP | FLASH_IT_OPERR);
+
+  if(TypeProgram == FLASH_TYPEPROGRAM_DOUBLEWORD)
+  {
+                                                             
+    FLASH_Program_DoubleWord(Address, Data);
+  }
+  else if((TypeProgram == FLASH_TYPEPROGRAM_FAST) || (TypeProgram == FLASH_TYPEPROGRAM_FAST_AND_LAST))
+  {
+                                                                           
+    FLASH_Program_Fast(Address, (uint32_t)Data);
+  }
+  else
+  {
+                       
+  }
+
+  return status;
+}
+
+   
+                                          
+                
+    
+void HAL_FLASH_IRQHandler(void)
+{
+  uint32_t tmp_page;
+  uint32_t error;
+  FLASH_ProcedureTypeDef procedure;
+
+                                                                                  
+  CLEAR_BIT(FLASH->CR, (FLASH_CR_PG | FLASH_CR_MER1 | FLASH_CR_PER | FLASH_CR_PNB));
+#if defined (STM32L471xx) || defined (STM32L475xx) || defined (STM32L476xx) || defined (STM32L485xx) || defined (STM32L486xx) || \
+    defined (STM32L496xx) || defined (STM32L4A6xx) || \
+    defined (STM32L4P5xx) || defined (STM32L4Q5xx) || \
+    defined (STM32L4R5xx) || defined (STM32L4R7xx) || defined (STM32L4R9xx) || defined (STM32L4S5xx) || defined (STM32L4S7xx) || defined (STM32L4S9xx)
+  CLEAR_BIT(FLASH->CR, FLASH_CR_MER2);
+#endif
+
+                                                                   
+  if(pFlash.ProcedureOnGoing == FLASH_PROC_PROGRAM_LAST)
+  {
+    CLEAR_BIT(FLASH->CR, FLASH_CR_FSTPG);
+  }
+
+                                         
+  error = (FLASH->SR & FLASH_FLAG_SR_ERRORS);
+
+  if (error !=0U)
+  {
+                           
+    pFlash.ErrorCode |= error;
+
+                                       
+    __HAL_FLASH_CLEAR_FLAG(error);
+
+                                                             
+    FLASH_FlushCaches() ;
+
+                                             
+    procedure = pFlash.ProcedureOnGoing;
+    if(procedure == FLASH_PROC_PAGE_ERASE)
+    {
+       HAL_FLASH_OperationErrorCallback(pFlash.Page);
+    }
+    else if(procedure == FLASH_PROC_MASS_ERASE)
+    {
+        HAL_FLASH_OperationErrorCallback(pFlash.Bank);
+    }
+    else if((procedure == FLASH_PROC_PROGRAM) ||
+            (procedure == FLASH_PROC_PROGRAM_LAST))
+    {
+       HAL_FLASH_OperationErrorCallback(pFlash.Address);
+    }
+    else
+    {
+       HAL_FLASH_OperationErrorCallback(0U);
+    }
+
+                                  
+    pFlash.ProcedureOnGoing = FLASH_PROC_NONE;
+  }
+
+                                          
+  if(__HAL_FLASH_GET_FLAG(FLASH_FLAG_EOP) != 0U)
+  {
+                                                  
+    __HAL_FLASH_CLEAR_FLAG(FLASH_FLAG_EOP);
+
+    if(pFlash.ProcedureOnGoing == FLASH_PROC_PAGE_ERASE)
+    {
+                                                  
+      pFlash.NbPagesToErase--;
+
+                                                  
+      if(pFlash.NbPagesToErase != 0U)
+      {
+                                                     
+        HAL_FLASH_EndOfOperationCallback(pFlash.Page);
+
+                                   
+        pFlash.Page++;
+        tmp_page = pFlash.Page;
+        FLASH_PageErase(tmp_page, pFlash.Bank);
+      }
+      else
+      {
+                                    
+                                                          
+        pFlash.Page = 0xFFFFFFFFU;
+        pFlash.ProcedureOnGoing = FLASH_PROC_NONE;
+
+                                                                 
+        FLASH_FlushCaches() ;
+
+                                               
+        HAL_FLASH_EndOfOperationCallback(pFlash.Page);
+      }
+    }
+    else
+    {
+                                                               
+      FLASH_FlushCaches() ;
+
+      procedure = pFlash.ProcedureOnGoing;
+      if(procedure == FLASH_PROC_MASS_ERASE)
+      {
+                                                       
+                                               
+        HAL_FLASH_EndOfOperationCallback(pFlash.Bank);
+      }
+      else if((procedure == FLASH_PROC_PROGRAM) ||
+              (procedure == FLASH_PROC_PROGRAM_LAST))
+      {
+                                                        
+                                               
+        HAL_FLASH_EndOfOperationCallback(pFlash.Address);
+      }
+      else
+      {
+                           
+      }
+
+                                     
+      pFlash.ProcedureOnGoing = FLASH_PROC_NONE;
+    }
+  }
+
+  if(pFlash.ProcedureOnGoing == FLASH_PROC_NONE)
+  {
+                                                       
+    __HAL_FLASH_DISABLE_IT(FLASH_IT_EOP | FLASH_IT_OPERR);
+
+                          
+    __HAL_UNLOCK(&pFlash);
+  }
+}
+
+   
+                                                      
+                                                                                          
+                                                                              
+                                                           
+                                                                                             
+                                                                         
+                
+    
+__weak void HAL_FLASH_EndOfOperationCallback(uint32_t ReturnValue)
+{
+                                                      
+  UNUSED(ReturnValue);
+
+                                                                              
+                                                                                      
+     
+}
+
+   
+                                                     
+                                                                                          
+                                                                             
+                                                                   
+                                                                        
+                
+    
+__weak void HAL_FLASH_OperationErrorCallback(uint32_t ReturnValue)
+{
+                                                      
+  UNUSED(ReturnValue);
+
+                                                                              
+                                                                                      
+     
+}
+
+   
+      
+    
+
+                                                                          
+                                 
+  
+         
+                                                                                
+                                                              
+                                                                                
+        
+                                                                             
+                      
+
+            
+      
+    
+
+   
+                                                     
+                      
+    
+HAL_StatusTypeDef HAL_FLASH_Unlock(void)
+{
+  HAL_StatusTypeDef status = HAL_OK;
+
+  if(READ_BIT(FLASH->CR, FLASH_CR_LOCK) != 0U)
+  {
+                                              
+    WRITE_REG(FLASH->KEYR, FLASH_KEY1);
+    WRITE_REG(FLASH->KEYR, FLASH_KEY2);
+
+                                  
+    if(READ_BIT(FLASH->CR, FLASH_CR_LOCK) != 0U)
+    {
+      status = HAL_ERROR;
+    }
+  }
+
+  return status;
+}
+
+   
+                                                   
+                      
+    
+HAL_StatusTypeDef HAL_FLASH_Lock(void)
+{
+                                                           
+  SET_BIT(FLASH->CR, FLASH_CR_LOCK);
+
+  return HAL_OK;
+}
+
+   
+                                                           
+                      
+    
+HAL_StatusTypeDef HAL_FLASH_OB_Unlock(void)
+{
+  if(READ_BIT(FLASH->CR, FLASH_CR_OPTLOCK) != 0U)
+  {
+                                                         
+    WRITE_REG(FLASH->OPTKEYR, FLASH_OPTKEY1);
+    WRITE_REG(FLASH->OPTKEYR, FLASH_OPTKEY2);
+  }
+  else
+  {
+    return HAL_ERROR;
+  }
+
+  return HAL_OK;
+}
+
+   
+                                                         
+                      
+    
+HAL_StatusTypeDef HAL_FLASH_OB_Lock(void)
+{
+                                                                          
+  SET_BIT(FLASH->CR, FLASH_CR_OPTLOCK);
+
+  return HAL_OK;
+}
+
+   
+                                           
+                      
+    
+HAL_StatusTypeDef HAL_FLASH_OB_Launch(void)
+{
+                                                      
+  SET_BIT(FLASH->CR, FLASH_CR_OBL_LAUNCH);
+
+                                               
+  return(FLASH_WaitForLastOperation((uint32_t)FLASH_TIMEOUT_VALUE));
+}
+
+   
+      
+    
+
+                                                                                   
+                                        
+  
+         
+                                                                                
+                                                       
+                                                                                
+        
+                                                                              
+
+            
+      
+    
+
+   
+                                              
+                                                       
+                                                                                
+                                                                              
+                                                                                 
+                                                                               
+                                                                         
+                                                                         
+                                                      
+                                                             
+                                                                 
+                                                                     
+                                                                          
+                                                         
+                                                                         
+                                                                               
+                                                                      
+                                                              
+                                                                     
+                                                                                                                         
+    
+uint32_t HAL_FLASH_GetError(void)
+{
+   return pFlash.ErrorCode;
+}
+
+   
+      
+    
+
+   
+      
+    
+
+                                                                                
+
+                                       
+      
+    
+
+   
+                                                   
+                                                   
+                                        
+    
+HAL_StatusTypeDef FLASH_WaitForLastOperation(uint32_t Timeout)
+{
+                                                                                  
+                                                                                
+                        
+
+  uint32_t tickstart = HAL_GetTick();
+  uint32_t error;
+
+  while(__HAL_FLASH_GET_FLAG(FLASH_FLAG_BSY))
+  {
+    if(Timeout != HAL_MAX_DELAY)
+    {
+      if((HAL_GetTick() - tickstart) >= Timeout)
+      {
+        return HAL_TIMEOUT;
+      }
+    }
+  }
+
+  error = (FLASH->SR & FLASH_FLAG_SR_ERRORS);
+
+  if(error != 0u)
+  {
+                           
+    pFlash.ErrorCode |= error;
+
+                                       
+    __HAL_FLASH_CLEAR_FLAG(error);
+
+    return HAL_ERROR;
+  }
+
+                                          
+  if (__HAL_FLASH_GET_FLAG(FLASH_FLAG_EOP))
+  {
+                                                  
+    __HAL_FLASH_CLEAR_FLAG(FLASH_FLAG_EOP);
+  }
+
+                                     
+  return HAL_OK;
+}
+
+   
+                                                                
+                                                           
+                                                     
+                
+    
+static void FLASH_Program_DoubleWord(uint32_t Address, uint64_t Data)
+{
+                            
+  assert_param(IS_FLASH_PROGRAM_ADDRESS(Address));
+
+                  
+  SET_BIT(FLASH->CR, FLASH_CR_PG);
+
+                          
+  *(__IO uint32_t*)Address = (uint32_t)Data;
+
+                                                                          
+                                                        
+  __ISB();
+
+                           
+  *(__IO uint32_t*)(Address+4U) = (uint32_t)(Data >> 32);
+}
+
+   
+                                                                           
+                                                           
+                                                                        
+                
+    
+static void FLASH_Program_Fast(uint32_t Address, uint32_t DataAddress)
+{
+  uint32_t primask_bit;
+  uint8_t row_index = (2*FLASH_NB_DOUBLE_WORDS_IN_ROW);
+  __IO uint32_t *dest_addr = (__IO uint32_t*)Address;
+  __IO uint32_t *src_addr = (__IO uint32_t*)DataAddress;
+
+                            
+  assert_param(IS_FLASH_MAIN_MEM_ADDRESS(Address));
+
+                     
+  SET_BIT(FLASH->CR, FLASH_CR_FSTPG);
+
+                                                                    
+  primask_bit = __get_PRIMASK();
+  __disable_irq();
+
+                                          
+  do
+  {
+    *dest_addr = *src_addr;
+    dest_addr++;
+    src_addr++;
+    row_index--;
+  } while (row_index != 0U);
+
+                                
+  __set_PRIMASK(primask_bit);
+}
+
+   
+      
+    
+
+#endif                               
+
+   
+      
+    
+
+   
+      
+    
+

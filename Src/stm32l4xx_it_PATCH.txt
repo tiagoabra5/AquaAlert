@@ -1,0 +1,51 @@
+/* ============================================================================
+   MODELO para stm32l4xx_it.c (gerado automaticamente pelo STM32CubeIDE)
+   ============================================================================
+   O CubeIDE ja gera os handlers EXTI0_IRQHandler, EXTI15_10_IRQHandler, etc.
+   com a chamada padrao HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_x) dentro.
+   NAO apague essa chamada -- so ACRESCENTE o trecho abaixo, chamando as
+   funcoes que declaramos em main.c (APP_ButtonPressedCallback / APP_RadioIrqCallback).
+
+   Pinos usados neste projeto:
+     - Botao B1 (USER)      -> PC13 -> EXTI15_10_IRQHandler
+     - GPIO3 do S2-LP (IRQ) -> PC0  -> EXTI0_IRQHandler
+   ============================================================================ */
+
+/* Adicione este protótipo perto do topo do arquivo, junto aos outros includes: */
+extern void APP_ButtonPressedCallback(void);
+extern void APP_RadioIrqCallback(void);
+
+/* ---------------------------------------------------------------------------
+   Dentro de EXTI0_IRQHandler (gerado pelo CubeIDE), acrescente a chamada:
+--------------------------------------------------------------------------- */
+void EXTI0_IRQHandler(void)
+{
+  /* linha(s) que o CubeIDE ja gerou: */
+  HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_0);
+
+  /* ACRESCENTAR: */
+  APP_RadioIrqCallback();
+}
+
+/* ---------------------------------------------------------------------------
+   Dentro de EXTI15_10_IRQHandler (gerado pelo CubeIDE), acrescente a chamada:
+--------------------------------------------------------------------------- */
+void EXTI15_10_IRQHandler(void)
+{
+  /* linha(s) que o CubeIDE ja gerou: */
+  HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_13);
+
+  /* ACRESCENTAR: */
+  APP_ButtonPressedCallback();
+}
+
+/* ============================================================================
+   IMPORTANTE: no arquivo .ioc do projeto (aba "Pinout & Configuration"),
+   configure:
+     - PC13 como GPIO_EXTI13 (modo "External Interrupt Mode with Falling edge
+       trigger detection"), com pull-up interno -- geralmente o CubeIDE ja
+       marca isso sozinho quando voce seleciona o botao B1 no board selector.
+     - PC0 (GPIO3 do S2-LP / Arduino A5) como GPIO_EXTI0, tambem com borda de
+       descida (Falling edge), sem pull (o S2-LP ja tem o proprio driver no pino).
+     - Habilite as interrupcoes EXTI0_IRQn e EXTI15_10_IRQn na aba NVIC Settings.
+   ============================================================================ */

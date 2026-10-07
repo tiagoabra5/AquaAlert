@@ -1,0 +1,551 @@
+/**
+  ******************************************************************************
+  * @file    stm32l4xx_hal_gpio.c
+  * @author  MCD Application Team
+  * @brief   GPIO HAL module driver.
+  *          This file provides firmware functions to manage the following
+  *          functionalities of the General Purpose Input/Output (GPIO) peripheral:
+  *           + Initialization and de-initialization functions
+  *           + IO operation functions
+  *
+  ******************************************************************************
+  * @attention
+  *
+  * Copyright (c) 2017 STMicroelectronics.
+  * All rights reserved.
+  *
+  * This software is licensed under terms that can be found in the LICENSE file
+  * in the root directory of this software component.
+  * If no LICENSE file comes with this software, it is provided AS-IS.
+  *
+  ******************************************************************************
+  @verbatim
+  ==============================================================================
+                    ##### GPIO Peripheral features #####
+  ==============================================================================
+  [..]
+    (+) Each port bit of the general-purpose I/O (GPIO) ports can be individually
+        configured by software in several modes:
+        (++) Input mode
+        (++) Analog mode
+        (++) Output mode
+        (++) Alternate function mode
+        (++) External interrupt/event lines
+
+    (+) During and just after reset, the alternate functions and external interrupt
+        lines are not active and the I/O ports are configured in input floating mode.
+
+    (+) All GPIO pins have weak internal pull-up and pull-down resistors, which can be
+        activated or not.
+
+    (+) In Output or Alternate mode, each IO can be configured on open-drain or push-pull
+        type and the IO speed can be selected depending on the VDD value.
+
+    (+) The microcontroller IO pins are connected to onboard peripherals/modules through a
+        multiplexer that allows only one peripheral alternate function (AF) connected
+       to an IO pin at a time. In this way, there can be no conflict between peripherals
+       sharing the same IO pin.
+
+    (+) All ports have external interrupt/event capability. To use external interrupt
+        lines, the port must be configured in input mode. All available GPIO pins are
+        connected to the 16 external interrupt/event lines from EXTI0 to EXTI15.
+
+    (+) The external interrupt/event controller consists of up to 39 edge detectors
+        (16 lines are connected to GPIO) for generating event/interrupt requests (each
+        input line can be independently configured to select the type (interrupt or event)
+        and the corresponding trigger event (rising or falling or both). Each line can
+        also be masked independently.
+
+                     ##### How to use this driver #####
+  ==============================================================================
+  [..]
+    (#) Enable the GPIO AHB clock using the following function: __HAL_RCC_GPIOx_CLK_ENABLE().
+
+    (#) Configure the GPIO pin(s) using HAL_GPIO_Init().
+        (++) Configure the IO mode using "Mode" member from GPIO_InitTypeDef structure
+        (++) Activate Pull-up, Pull-down resistor using "Pull" member from GPIO_InitTypeDef
+             structure.
+        (++) In case of Output or alternate function mode selection: the speed is
+             configured through "Speed" member from GPIO_InitTypeDef structure.
+        (++) In alternate mode is selection, the alternate function connected to the IO
+             is configured through "Alternate" member from GPIO_InitTypeDef structure.
+        (++) Analog mode is required when a pin is to be used as ADC channel
+             or DAC output.
+        (++) In case of external interrupt/event selection the "Mode" member from
+             GPIO_InitTypeDef structure select the type (interrupt or event) and
+             the corresponding trigger event (rising or falling or both).
+
+    (#) In case of external interrupt/event mode selection, configure NVIC IRQ priority
+        mapped to the EXTI line using HAL_NVIC_SetPriority() and enable it using
+        HAL_NVIC_EnableIRQ().
+
+    (#) To get the level of a pin configured in input mode use HAL_GPIO_ReadPin().
+
+    (#) To set/reset the level of a pin configured in output mode use
+        HAL_GPIO_WritePin()/HAL_GPIO_TogglePin().
+
+   (#) To lock pin configuration until next reset use HAL_GPIO_LockPin().
+
+    (#) During and just after reset, the alternate functions are not
+        active and the GPIO pins are configured in input floating mode (except JTAG
+        pins).
+
+    (#) The LSE oscillator pins OSC32_IN and OSC32_OUT can be used as general purpose
+        (PC14 and PC15, respectively) when the LSE oscillator is off. The LSE has
+        priority over the GPIO function.
+
+    (#) The HSE oscillator pins OSC_IN/OSC_OUT can be used as
+        general purpose PH0 and PH1, respectively, when the HSE oscillator is off.
+        The HSE has priority over the GPIO function.
+
+  @endverbatim
+  ******************************************************************************
+  */
+
+                                                                                
+#include "stm32l4xx_hal.h"
+
+                                    
+      
+    
+
+                       
+                                 
+      
+    
+                                                                     
+                                                                           
+                                                  
+                 
+                   
+    
+
+#ifdef HAL_GPIO_MODULE_ENABLED
+
+                                                                                
+                                                                                
+                                                         
+      
+    
+#define GPIO_NUMBER           (16u)
+   
+      
+    
+
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+
+                                                             
+      
+    
+
+                                                                                       
+                                                        
+  
+         
+                                                                                
+                                                                        
+                                                                                
+
+            
+      
+    
+
+   
+                                                                                                   
+                                                                                        
+                                                                           
+                                                                            
+                
+    
+void HAL_GPIO_Init(GPIO_TypeDef  *GPIOx, GPIO_InitTypeDef *GPIO_Init)
+{
+  uint32_t position = 0x00u;
+  uint32_t iocurrent;
+  uint32_t temp;
+
+                            
+  assert_param(IS_GPIO_ALL_INSTANCE(GPIOx));
+  assert_param(IS_GPIO_PIN(GPIO_Init->Pin));
+  assert_param(IS_GPIO_MODE(GPIO_Init->Mode));
+
+                               
+  while (((GPIO_Init->Pin) >> position) != 0x00u)
+  {
+                                 
+    iocurrent = (GPIO_Init->Pin) & (1uL << position);
+
+    if (iocurrent != 0x00u)
+    {
+                                                                                
+                                                                  
+      if (((GPIO_Init->Mode & GPIO_MODE) == MODE_OUTPUT) || ((GPIO_Init->Mode & GPIO_MODE) == MODE_AF))
+      {
+                                       
+        assert_param(IS_GPIO_SPEED(GPIO_Init->Speed));
+
+                                    
+        temp = GPIOx->OSPEEDR;
+        temp &= ~(GPIO_OSPEEDR_OSPEED0 << (position * 2u));
+        temp |= (GPIO_Init->Speed << (position * 2u));
+        GPIOx->OSPEEDR = temp;
+
+                                          
+        temp = GPIOx->OTYPER;
+        temp &= ~(GPIO_OTYPER_OT0 << position) ;
+        temp |= (((GPIO_Init->Mode & OUTPUT_TYPE) >> OUTPUT_TYPE_Pos) << position);
+        GPIOx->OTYPER = temp;
+      }
+
+#if defined(STM32L471xx) || defined(STM32L475xx) || defined(STM32L476xx) || defined(STM32L485xx) || defined(STM32L486xx)
+
+                                                                         
+      if((GPIO_Init->Mode & GPIO_MODE_ANALOG) == GPIO_MODE_ANALOG)
+      {
+                                          
+        temp = GPIOx->ASCR;
+        temp &= ~(GPIO_ASCR_ASC0 << position) ;
+        temp |= (((GPIO_Init->Mode & GPIO_MODE_ANALOG_ADC_CONTROL) >> 3) << position);
+        GPIOx->ASCR = temp;
+      }
+
+#endif                                                                              
+
+                                                                         
+      if ((GPIO_Init->Mode & GPIO_MODE) != MODE_ANALOG)
+      {
+                                      
+        assert_param(IS_GPIO_PULL(GPIO_Init->Pull));
+
+        temp = GPIOx->PUPDR;
+        temp &= ~(GPIO_PUPDR_PUPD0 << (position * 2U));
+        temp |= ((GPIO_Init->Pull) << (position * 2U));
+        GPIOx->PUPDR = temp;
+      }
+
+                                                        
+      if ((GPIO_Init->Mode & GPIO_MODE) == MODE_AF)
+      {
+                                                     
+        assert_param(IS_GPIO_AF_INSTANCE(GPIOx));
+        assert_param(IS_GPIO_AF(GPIO_Init->Alternate));
+
+                                                                     
+        temp = GPIOx->AFR[position >> 3u];
+        temp &= ~(0xFul << ((position & 0x07u) * 4u));
+        temp |= ((GPIO_Init->Alternate) << ((position & 0x07u) * 4u));
+        GPIOx->AFR[position >> 3u] = temp;
+      }
+
+                                                                            
+      temp = GPIOx->MODER;
+      temp &= ~(GPIO_MODER_MODE0 << (position * 2u));
+      temp |= ((GPIO_Init->Mode & GPIO_MODE) << (position * 2u));
+      GPIOx->MODER = temp;
+
+                                                                                
+                                                                        
+      if ((GPIO_Init->Mode & EXTI_MODE) != 0x00u)
+      {
+                                 
+        __HAL_RCC_SYSCFG_CLK_ENABLE();
+
+        temp = SYSCFG->EXTICR[position >> 2u];
+        temp &= ~(0x0FuL << (4u * (position & 0x03u)));
+        temp |= (GPIO_GET_INDEX(GPIOx) << (4u * (position & 0x03u)));
+        SYSCFG->EXTICR[position >> 2u] = temp;
+
+                                                     
+        temp = EXTI->RTSR1;
+        temp &= ~(iocurrent);
+        if ((GPIO_Init->Mode & TRIGGER_RISING) != 0x00u)
+        {
+          temp |= iocurrent;
+        }
+        EXTI->RTSR1 = temp;
+
+        temp = EXTI->FTSR1;
+        temp &= ~(iocurrent);
+        if ((GPIO_Init->Mode & TRIGGER_FALLING) != 0x00u)
+        {
+          temp |= iocurrent;
+        }
+        EXTI->FTSR1 = temp;
+
+                                           
+        temp = EXTI->EMR1;
+        temp &= ~(iocurrent);
+        if ((GPIO_Init->Mode & EXTI_EVT) != 0x00u)
+        {
+          temp |= iocurrent;
+        }
+        EXTI->EMR1 = temp;
+
+        temp = EXTI->IMR1;
+        temp &= ~(iocurrent);
+        if ((GPIO_Init->Mode & EXTI_IT) != 0x00u)
+        {
+          temp |= iocurrent;
+        }
+        EXTI->IMR1 = temp;
+      }
+    }
+
+    position++;
+  }
+}
+
+   
+                                                                                       
+                                                                                        
+                                                          
+                                                                                       
+                
+    
+void HAL_GPIO_DeInit(GPIO_TypeDef  *GPIOx, uint32_t GPIO_Pin)
+{
+  uint32_t position = 0x00u;
+  uint32_t iocurrent;
+  uint32_t tmp;
+
+                            
+  assert_param(IS_GPIO_ALL_INSTANCE(GPIOx));
+  assert_param(IS_GPIO_PIN(GPIO_Pin));
+
+                               
+  while ((GPIO_Pin >> position) != 0x00u)
+  {
+                                 
+    iocurrent = (GPIO_Pin) & (1uL << position);
+
+    if (iocurrent != 0x00u)
+    {
+                                                                                
+                                                                    
+
+      tmp = SYSCFG->EXTICR[position >> 2u];
+      tmp &= (0x0FuL << (4u * (position & 0x03u)));
+      if (tmp == (GPIO_GET_INDEX(GPIOx) << (4u * (position & 0x03u))))
+      {
+                                           
+        EXTI->IMR1 &= ~(iocurrent);
+        EXTI->EMR1 &= ~(iocurrent);
+
+                                                     
+        EXTI->FTSR1 &= ~(iocurrent);
+        EXTI->RTSR1 &= ~(iocurrent);
+
+        tmp = 0x0FuL << (4u * (position & 0x03u));
+        SYSCFG->EXTICR[position >> 2u] &= ~tmp;
+      }
+
+                                                                                
+                                       
+      GPIOx->MODER |= (GPIO_MODER_MODE0 << (position * 2u));
+
+                                                                  
+      GPIOx->AFR[position >> 3u] &= ~(0xFul << ((position & 0x07u) * 4u)) ;
+
+                                                    
+      GPIOx->OSPEEDR &= ~(GPIO_OSPEEDR_OSPEED0 << (position * 2u));
+
+                                                      
+      GPIOx->OTYPER  &= ~(GPIO_OTYPER_OT0 << position) ;
+
+                                                                            
+      GPIOx->PUPDR &= ~(GPIO_PUPDR_PUPD0 << (position * 2u));
+
+#if defined(STM32L471xx) || defined(STM32L475xx) || defined(STM32L476xx) || defined(STM32L485xx) || defined(STM32L486xx)
+                                                                        
+      GPIOx->ASCR &= ~(GPIO_ASCR_ASC0<< position);
+#endif                                                                              
+    }
+
+    position++;
+  }
+}
+
+   
+      
+    
+
+                                                                   
+                                                                        
+  
+         
+                                                                                
+                                                         
+                                                                                
+
+            
+      
+    
+
+   
+                                              
+                                                                                        
+                                                    
+                                                                                       
+                                     
+    
+GPIO_PinState HAL_GPIO_ReadPin(GPIO_TypeDef* GPIOx, uint16_t GPIO_Pin)
+{
+  GPIO_PinState bitstatus;
+
+                            
+  assert_param(IS_GPIO_PIN(GPIO_Pin));
+
+  if ((GPIOx->IDR & GPIO_Pin) != 0x00u)
+  {
+    bitstatus = GPIO_PIN_SET;
+  }
+  else
+  {
+    bitstatus = GPIO_PIN_RESET;
+  }
+  return bitstatus;
+}
+
+   
+                                                    
+   
+                                                                                             
+                                                                               
+                                           
+   
+                                                                                        
+                                                          
+                                                                                       
+                                                                           
+                                                                       
+                                                         
+                                                     
+                
+    
+void HAL_GPIO_WritePin(GPIO_TypeDef* GPIOx, uint16_t GPIO_Pin, GPIO_PinState PinState)
+{
+                            
+  assert_param(IS_GPIO_PIN(GPIO_Pin));
+  assert_param(IS_GPIO_PIN_ACTION(PinState));
+
+  if(PinState != GPIO_PIN_RESET)
+  {
+    GPIOx->BSRR = (uint32_t)GPIO_Pin;
+  }
+  else
+  {
+    GPIOx->BRR = (uint32_t)GPIO_Pin;
+  }
+}
+
+   
+                                          
+                                                                                        
+                                                     
+                
+    
+void HAL_GPIO_TogglePin(GPIO_TypeDef* GPIOx, uint16_t GPIO_Pin)
+{
+  uint32_t odr;
+
+                            
+  assert_param(IS_GPIO_PIN(GPIO_Pin));
+
+                                              
+  odr = GPIOx->ODR;
+
+                                                                               
+  GPIOx->BSRR = ((odr & GPIO_Pin) << GPIO_NUMBER) | (~odr & GPIO_Pin);
+}
+
+   
+                                                 
+                                                                              
+                                                   
+                                                                               
+                                 
+                                                                                        
+                                                          
+                                                                                       
+                
+    
+HAL_StatusTypeDef HAL_GPIO_LockPin(GPIO_TypeDef* GPIOx, uint16_t GPIO_Pin)
+{
+  __IO uint32_t tmp = GPIO_LCKR_LCKK;
+
+                            
+  assert_param(IS_GPIO_LOCK_INSTANCE(GPIOx));
+  assert_param(IS_GPIO_PIN(GPIO_Pin));
+
+                                     
+  tmp |= GPIO_Pin;
+                                             
+  GPIOx->LCKR = tmp;
+                                               
+  GPIOx->LCKR = GPIO_Pin;
+                                             
+  GPIOx->LCKR = tmp;
+                                                                                
+  tmp = GPIOx->LCKR;
+
+                                                     
+  if ((GPIOx->LCKR & GPIO_LCKR_LCKK) != 0x00u)
+  {
+    return HAL_OK;
+  }
+  else
+  {
+    return HAL_ERROR;
+  }
+}
+
+   
+                                          
+                                                                                 
+                
+    
+void HAL_GPIO_EXTI_IRQHandler(uint16_t GPIO_Pin)
+{
+                                    
+  if(__HAL_GPIO_EXTI_GET_IT(GPIO_Pin) != 0x00u)
+  {
+    __HAL_GPIO_EXTI_CLEAR_IT(GPIO_Pin);
+    HAL_GPIO_EXTI_Callback(GPIO_Pin);
+  }
+}
+
+   
+                                         
+                                                                                 
+                
+    
+__weak void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+                                                      
+  UNUSED(GPIO_Pin);
+
+                                                                             
+                                                                           
+     
+}
+
+   
+      
+    
+
+
+   
+      
+    
+
+#endif                              
+   
+      
+    
+
+   
+      
+    
+

@@ -1,0 +1,37 @@
+# Build artifacts
+Debug/
+Release/
+build/
+obj/
+out/
+
+# STM32 / GCC generated files
+*.elf
+*.bin
+*.hex
+*.map
+*.axf
+*.lst
+*.o
+*.obj
+*.d
+*.su
+*.out
+*.a
+*.lib
+
+# IDE configuration
+.settings/
+.vscode/
+.idea/
+*.code-workspace
+
+# Temporary and OS files
+*.log
+*.tmp
+*.bak
+*.swp
+*~
+Thumbs.db
+.DS_Store
+desktop.ini
