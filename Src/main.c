@@ -4,31 +4,40 @@
 #include "radio_gpio.h"
 #include "s2lp_interface.h"
 #include "secure_link.h"
+#include "aquaalert_rf.h"
+#include "fhss.h"
 
 
 #define TRIGGER_BYTE        0xAA
 #define TX_PAYLOAD_LEN       SL_FRAME_LEN(1)
 #define RX_BUFFER_SIZE       128   /* tamanho da FIFO RX do S2-LP */
 
+#define RADIO_CHECK_MS       250   /* periodo da verificacao de seguranca do radio */
+#define BUTTON_RELEASE_MS    150   /* botao solto por este tempo para rearmar (debounce) */
+
+/* Preambulo em pares de bits e sync em bits, como o S2-LP espera. */
+#define PREAMBLE_PAIRS(bytes)  ((bytes) * 4U)
+#define SYNC_BITS(bytes)       ((bytes) * 8U)
+
 
 static SRadioInit xAppRadioInit = {
-  BASE_FREQUENCY,
-  MODULATION_SELECT,
-  DATARATE,
-  FREQ_DEVIATION,
-  BANDWIDTH
+  AA_FHSS_BASE_HZ,
+  AA_MODULATION,
+  AA_DATARATE,
+  AA_FREQ_DEV,
+  AA_CHANNEL_BW
 };
 
 static PktBasicInit xAppBasicInit = {
-  .xPreambleLength = PREAMBLE_LENGTH,
-  .xSyncLength = SYNC_LENGTH,
-  .lSyncWords = SYNC_WORD,
-  .xFixVarLength = VARIABLE_LENGTH,
+  .xPreambleLength = PREAMBLE_PAIRS(AA_PREAMBLE_BYTES),
+  .xSyncLength = SYNC_BITS(AA_SYNC_BYTES),
+  .lSyncWords = AA_SYNC_WORD,
+  .xFixVarLength = S_ENABLE,          /* comprimento variavel */
   .cExtendedPktLenField = S_DISABLE,
-  .xCrcMode = CRC_MODE,
+  .xCrcMode = AA_CRC_MODE,
   .xAddressField = S_DISABLE,
-  .xFec = EN_FEC,
-  .xDataWhitening = EN_WHITENING
+  .xFec = AA_FEC,
+  .xDataWhitening = AA_WHITENING
 };
 
 static SGpioInit xAppGpioIrq = {
@@ -41,27 +50,37 @@ static uint8_t aTxBuffer[SL_FRAME_MAX] = { 0 };
 static uint8_t aRxBuffer[RX_BUFFER_SIZE] = { 0 };
 
 
-volatile uint8_t gButtonPressed = 0;
-volatile uint8_t gRadioIrq      = 0;
+volatile uint8_t  gButtonPressed = 0;
+volatile uint32_t gButtonTick    = 0;   /* HAL_GetTick() da ultima borda do botao */
+volatile uint8_t  gRadioIrq      = 0;
+
+/* Contador de boot do secure_link (Src/secure_link.c), usado so como semente. */
+extern volatile uint32_t gSlBootCounter;
 
 
 static void RadioInitAll(void);
 static void EnterRxMode(void);
 static void HandleRadioIrq(void);
 static void TransmitTrigger(void);
+static void TransmitOnChannel(uint8_t channel, uint8_t *frame, uint8_t len);
 static void SecurityFault(SL_Status code);
 static void RadioToReady(void);
 static void ConfigureRxPath(void);
-
-#define RADIO_CHECK_MS       250   /* periodo da verificacao de seguranca do radio */
+static void ProcessButton(uint32_t now);
+static void ParkOnNewChannel(uint32_t now);
+static uint32_t AlertDwellMs(void);
 
 /* Diagnostico do radio: adicione em Live Expressions no depurador. */
-volatile uint32_t  gTxOk = 0;        /* quadros enviados */
-volatile uint32_t  gTxFail = 0;      /* envio nao concluido (canal ocupado/timeout) */
+volatile uint32_t  gTxOk = 0;        /* copias enviadas (uma por canal por destino) */
+volatile uint32_t  gTxFail = 0;      /* copia nao enviada (canal ocupado/timeout) */
 volatile uint32_t  gRxOk = 0;        /* quadros aceitos */
-volatile uint32_t  gRxRejected = 0;  /* quadros recusados pelo secure_link */
+volatile uint32_t  gRxRejected = 0;  /* quadros recusados pelo secure_link (inclui copias repetidas) */
 volatile SL_Status gLastRxStatus = SL_OK;
 volatile uint32_t  gRxRearm = 0;     /* vezes que o radio teve de ser recolocado em RX */
+volatile uint32_t  gSweeps = 0;      /* alertas enviados (varreduras completas) */
+volatile uint32_t  gSweepDeferred = 0; /* alertas adiados pelo limite de ocupacao do canal */
+volatile uint8_t   gParkChannel = 0; /* canal em que este no esta escutando */
+volatile int32_t   gLastRssi = 0;    /* RSSI (dBm, na entrada do S2-LP) do ultimo quadro aceito */
 
 /* Diagnostico do front-end (FEM): adicione em Live Expressions no depurador.
  * gRangeExt : 3 = SKY66420 reconhecido; 0 = nenhum extensor de alcance detectado.
@@ -69,6 +88,13 @@ volatile uint32_t  gRxRearm = 0;     /* vezes que o radio teve de ser recolocado
  * 0xFF = ainda nao preenchido (S2LPInterfaceInit ainda nao rodou). */
 volatile uint8_t   gRangeExt  = 0xFF;
 volatile uint8_t   gHasEeprom = 0xFF;
+
+static uint8_t  sAlertPending = 0;
+static uint8_t  sButtonArmed = 1;
+static uint8_t  sButtonReleased = 0;
+static uint32_t sReleasedSince = 0;
+static uint32_t sArmedAt = 0;
+static uint32_t sParkSince = 0;
 
 
 int main(void)
@@ -97,6 +123,11 @@ int main(void)
   }
   BSP_LED_Off(LED2);
 
+  /* Semente da ordem dos canais: ID unico do chip + contador de boot, para
+   * que cada placa (e cada boot) use uma sequencia diferente. */
+  const volatile uint32_t *uid = (const volatile uint32_t *)UID_BASE;
+  FHSS_Init(uid[0] ^ (uid[1] * 2654435761UL) ^ uid[2] ^ (gSlBootCounter << 16) ^ SL_GetNodeId());
+
 
   S2LPInterfaceInit();
 
@@ -104,22 +135,30 @@ int main(void)
   gRangeExt  = (uint8_t)S2LPManagementGetRangeExtender();
   gHasEeprom = (uint8_t)RadioGetHasEeprom();
 
-  xAppRadioInit.lFrequencyBase = (uint32_t)BASE_FREQUENCY + S2LPManagementGetOffset();
+  xAppRadioInit.lFrequencyBase = AA_FHSS_BASE_HZ + S2LPManagementGetOffset();
 
 
   RadioInitAll();
 
-
-  EnterRxMode();
+  ParkOnNewChannel(HAL_GetTick());
+  sArmedAt = HAL_GetTick();
 
   uint32_t lastRadioCheck = HAL_GetTick();
   while (1)
   {
-    if (gButtonPressed)
+    uint32_t now = HAL_GetTick();
+
+    ProcessButton(now);
+
+    if (sAlertPending)
     {
-      gButtonPressed = 0;
-      TransmitTrigger();
-      EnterRxMode();
+      if (FHSS_SweepAllowed(now, AlertDwellMs()))
+      {
+        sAlertPending = 0;
+        TransmitTrigger();
+        EnterRxMode();
+      }
+      /* Senao, espera a janela de ocupacao liberar (o alerta nao se perde). */
     }
 
     if (gRadioIrq)
@@ -128,6 +167,10 @@ int main(void)
       HandleRadioIrq();
     }
 
+    if ((now - sParkSince) >= AA_FHSS_PARK_MS)
+    {
+      ParkOnNewChannel(now);
+    }
 
     if ((HAL_GetTick() - lastRadioCheck) >= RADIO_CHECK_MS)
     {
@@ -144,23 +187,77 @@ int main(void)
 }
 
 
+/* Botao com debounce: aceita uma borda so se o botao estava armado, e so
+ * rearma depois de ficar solto por BUTTON_RELEASE_MS. Repiques ao apertar e
+ * ao soltar (inclusive os que chegam durante uma varredura) sao ignorados. */
+static void ProcessButton(uint32_t now)
+{
+  if (gButtonPressed)
+  {
+    gButtonPressed = 0;
+    if (sButtonArmed && (int32_t)(gButtonTick - sArmedAt) >= 0)
+    {
+      sButtonArmed = 0;
+      sButtonReleased = 0;
+      if (!sAlertPending)
+      {
+        sAlertPending = 1;
+        if (!FHSS_SweepAllowed(now, AlertDwellMs()))
+        {
+          gSweepDeferred++;
+        }
+      }
+    }
+  }
+
+  if (!sButtonArmed)
+  {
+    if (BSP_PB_GetState(BUTTON_KEY) == GPIO_PIN_SET)   /* B1 solto (ativo em nivel baixo) */
+    {
+      if (!sButtonReleased)
+      {
+        sButtonReleased = 1;
+        sReleasedSince = now;
+      }
+      else if ((now - sReleasedSince) >= BUTTON_RELEASE_MS)
+      {
+        sButtonArmed = 1;
+        sArmedAt = now;
+      }
+    }
+    else
+    {
+      sButtonReleased = 0;
+    }
+  }
+}
+
+/* Ocupacao de cada canal causada por um alerta: uma copia por destino. */
+static uint32_t AlertDwellMs(void)
+{
+  return (uint32_t)(SL_GetNodeCount() - 1U) * FHSS_AirtimeMs(TX_PAYLOAD_LEN);
+}
+
+
 static void RadioInitAll(void)
 {
   S2LPGpioInit(&xAppGpioIrq);
   S2LPRadioInit(&xAppRadioInit);
-  S2LPRadioSetChannelSpace(CHANNEL_SPACE);
-  S2LPRadioSetChannel(CHANNEL_NUMBER);
+  S2LPRadioSetChannelSpace(AA_FHSS_SPACING_HZ);
+  S2LPRadioSetChannel(0);
+
+  /* Potencia: com o FEM, o S2-LP entrega AA_FEM_DRIVE_DBM na entrada TX do
+   * SKY66420 (ganho 16 dB -> ~+27 dBm na antena). Sem FEM, usa o S2-LP no maximo. */
   S2LPRadioSetMaxPALevel(S_DISABLE);
   if (S2LPManagementGetRangeExtender() == RANGE_EXT_NONE)
   {
-    S2LPRadioSetPALeveldBm(POWER_INDEX, POWER_DBM);
+    S2LPRadioSetPALeveldBm(AA_PA_INDEX, AA_PA_DBM_NO_FEM);
   }
   else
   {
-    uint8_t paLevelValue = 0x25;
-    S2LPSpiWriteRegisters(PA_POWER8_ADDR, 1, &paLevelValue);
+    S2LPRadioSetPALeveldBm(AA_PA_INDEX, AA_FEM_DRIVE_DBM);
   }
-  S2LPRadioSetPALevelMaxIndex(POWER_INDEX);
+  S2LPRadioSetPALevelMaxIndex(AA_PA_INDEX);
 
   S2LPPktBasicInit(&xAppBasicInit);
   ConfigureRxPath();
@@ -172,7 +269,8 @@ static void RadioInitAll(void)
   S2LPGpioIrqConfig(MAX_BO_CCA_REACH, S_ENABLE);   /* CSMA desistiu: canal ocupado */
 }
 
-/* Leva o S2-LP ao estado READY (sai de RX/TX), necessario antes de limpar FIFOs. */
+/* Leva o S2-LP ao estado READY (sai de RX/TX), necessario antes de limpar FIFOs
+ * e de trocar de canal. */
 static void RadioToReady(void)
 {
   uint32_t start = HAL_GetTick();
@@ -194,10 +292,19 @@ static void ConfigureRxPath(void)
   S2LP_SetRxTimeout(0);   /* RX sem timeout */
 }
 
+/* Sorteia um novo canal de escuta e volta a receber nele. */
+static void ParkOnNewChannel(uint32_t now)
+{
+  gParkChannel = FHSS_RandomChannel();
+  sParkSince = now;
+  EnterRxMode();
+}
+
 
 static void EnterRxMode(void)
 {
   RadioToReady();
+  S2LPRadioSetChannel(gParkChannel);
   S2LPCmdStrobeFlushRxFifo();
   S2LP_SetPayloadlength(TX_PAYLOAD_LEN);
   /* Limpa IRQs pendentes para o pino voltar ao nivel alto e a proxima
@@ -207,12 +314,56 @@ static void EnterRxMode(void)
 }
 
 
+/* Envia uma copia do quadro num canal e espera o fim (ou desistencia do CSMA). */
+static void TransmitOnChannel(uint8_t channel, uint8_t *frame, uint8_t len)
+{
+  RadioToReady();
+  S2LPRadioSetChannel(channel);
+  S2LP_SetPayloadlength(len);
+  S2LPGpioIrqClearStatus();
+  S2LP_StartTx(frame, len);   /* liga CSMA, carrega a FIFO e transmite (FEM em TX) */
+
+  uint32_t start = HAL_GetTick();
+  uint8_t sent = 0;
+  S2LPIrqs xIrqStatus;
+  do
+  {
+    S2LPGpioIrqGetStatus(&xIrqStatus);
+    if (xIrqStatus.IRQ_TX_DATA_SENT)
+    {
+      sent = 1;
+      break;
+    }
+    if (xIrqStatus.IRQ_MAX_BO_CCA_REACH)
+    {
+      break;
+    }
+  } while ((HAL_GetTick() - start) < AA_TX_TIMEOUT_MS);
+
+  if (sent)
+  {
+    gTxOk++;
+  }
+  else
+  {
+    gTxFail++;
+  }
+}
+
+
+/* Alerta com salto de frequencia: para cada destino, sela o quadro UMA vez
+ * (mesmo contador) e envia uma copia em cada um dos AA_FHSS_CHANNELS canais,
+ * numa ordem pseudoaleatoria. O destino, escutando em algum desses canais,
+ * recebe a sua copia; as demais copias que ele vier a ouvir sao recusadas
+ * como repetidas pelo anti-replay. */
 static void TransmitTrigger(void)
 {
   const uint8_t command = TRIGGER_BYTE;
   uint8_t frameLen = 0;
 
-  /* Um quadro por no permitido, cada um cifrado com a chave ECDH do par. */
+  FHSS_RecordSweep(HAL_GetTick(), AlertDwellMs());
+  gSweeps++;
+
   for (uint8_t dst = 1; dst <= SL_GetNodeCount(); dst++)
   {
     if (dst == SL_GetNodeId()
@@ -221,41 +372,16 @@ static void TransmitTrigger(void)
       continue;
     }
 
-    RadioToReady();
-    S2LP_SetPayloadlength(frameLen);
-    S2LPGpioIrqClearStatus();
-    S2LP_StartTx(aTxBuffer, frameLen);   /* liga CSMA, carrega a FIFO e transmite */
-
-    uint32_t start = HAL_GetTick();
-    uint8_t sent = 0;
-    S2LPIrqs xIrqStatus;
-    do
+    uint8_t startIdx = FHSS_RandomChannel();
+    for (uint8_t i = 0; i < AA_FHSS_CHANNELS; i++)
     {
-      S2LPGpioIrqGetStatus(&xIrqStatus);
-      if (xIrqStatus.IRQ_TX_DATA_SENT)
-      {
-        sent = 1;
-        break;
-      }
-      if (xIrqStatus.IRQ_MAX_BO_CCA_REACH)
-      {
-        break;
-      }
-    } while ((HAL_GetTick() - start) < 500U);
-
-    if (sent)
-    {
-      gTxOk++;
+      TransmitOnChannel(FHSS_SweepChannel(startIdx, i), aTxBuffer, frameLen);
     }
-    else
-    {
-      gTxFail++;
-    }
-
-    /* Sai do TX (ou do CSMA que desistiu) e restaura a configuracao de RX. */
-    RadioToReady();
-    ConfigureRxPath();
   }
+
+  /* Sai do TX (ou do CSMA que desistiu) e restaura a configuracao de RX. */
+  RadioToReady();
+  ConfigureRxPath();
 }
 
 
@@ -277,6 +403,7 @@ static void HandleRadioIrq(void)
     if (gLastRxStatus == SL_OK)
     {
       gRxOk++;
+      gLastRssi = S2LPRadioGetRssidBm();
       if (plainLen >= 1 && plain[0] == TRIGGER_BYTE)
       {
         BSP_LED_Toggle(LED2);
@@ -316,6 +443,7 @@ static void SecurityFault(SL_Status code)
 
 void APP_ButtonPressedCallback(void)
 {
+  gButtonTick = HAL_GetTick();
   gButtonPressed = 1;
 }
 

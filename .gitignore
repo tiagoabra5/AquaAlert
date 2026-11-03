@@ -35,3 +35,13 @@ out/
 Thumbs.db
 .DS_Store
 desktop.ini
+
+# PlatformIO
+.pio/
+
+# Chaves privadas dos nos (gerar com Tools/gerar_chaves_ecc.py)
+Inc/ecc_keys.h
+
+# Executavel do gerador de chaves
+gerar_chaves_ecc
+gerar_chaves_ecc.exe
