@@ -339,6 +339,7 @@ static void TransmitOnChannel(uint8_t channel, uint8_t *frame, uint8_t len)
   S2LPGpioIrqClearStatus();
   S2LP_StartTx(frame, len);   /* liga CSMA, carrega a FIFO e transmite (FEM em TX) */
 
+  const uint32_t timeoutMs = FHSS_AirtimeMs(len) + AA_TX_CSMA_MARGIN_MS;
   uint32_t start = HAL_GetTick();
   uint8_t sent = 0;
   S2LPIrqs xIrqStatus;
@@ -360,7 +361,7 @@ static void TransmitOnChannel(uint8_t channel, uint8_t *frame, uint8_t len)
       gTxFifoError++;
       break;
     }
-  } while ((HAL_GetTick() - start) < AA_TX_TIMEOUT_MS);
+  } while ((HAL_GetTick() - start) < timeoutMs);
 
   if (sent)
   {

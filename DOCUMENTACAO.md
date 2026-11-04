@@ -192,7 +192,8 @@ barramento.
    - define o tamanho do payload e limpa as IRQs;
    - `S2LP_StartTx()` liga o **CSMA** (limiar −90 dBm, até 5 backoffs),
      carrega a FIFO e transmite. O strobe de TX coloca o FEM em modo PA;
-   - faz polling por até **600 ms** esperando `TX_DATA_SENT` (`gTxOk++`) ou
+   - faz polling por até **tempo no ar + 150 ms de folga para o CSMA**
+     (~165 ms no perfil de 38,4 kbps) esperando `TX_DATA_SENT` (`gTxOk++`) ou
      `MAX_BO_CCA_REACH` (canal ocupado: pula o canal, `gTxFail++`).
 3. No fim, volta para READY e restaura a configuração de RX (`ConfigureRxPath()`), que o CSMA altera.
 

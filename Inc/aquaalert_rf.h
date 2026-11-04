@@ -62,7 +62,10 @@
  * (probabilidade ~ duracao_da_varredura / (2 * AA_FHSS_PARK_MS) ~ 0,6 %). */
 #define AA_FHSS_PARK_MS         (10UL * 60UL * 1000UL)
 
-/* Tempo maximo esperando o fim de um envio (CSMA + tempo no ar). */
-#define AA_TX_TIMEOUT_MS        600U
+/* Tempo maximo esperando o fim de um envio = tempo no ar do quadro (calculado
+ * pelo perfil ativo em FHSS_AirtimeMs) + esta folga para o CSMA (ate 5
+ * backoffs + escutas do canal). Antes era fixo em 600 ms, valor dimensionado
+ * para 4,8 kbps com FEC; em 38,4 kbps o timeout fica em ~165 ms. */
+#define AA_TX_CSMA_MARGIN_MS    150U
 
 #endif /* AQUAALERT_RF_H */
