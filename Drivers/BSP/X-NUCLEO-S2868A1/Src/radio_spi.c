@@ -154,7 +154,8 @@ void RadioSpiDeinit(void)
                                 
     SpiHandle.Instance               = RADIO_SPI;
     SpiHandle.Init.Mode              = SPI_MODE_MASTER;
-    SpiHandle.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_4;
+    /* APB2 = 80 MHz no L476: /16 = 5 MHz (S2-LP: maximo 10 MHz). */
+    SpiHandle.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_16;
     
     SpiHandle.Init.Direction         = SPI_DIRECTION_2LINES;
     SpiHandle.Init.CLKPhase          = SPI_PHASE_1EDGE;
@@ -238,7 +239,8 @@ void RadioSpiInit(void)
                                 
     SpiHandle.Instance               = RADIO_SPI;
     SpiHandle.Init.Mode              = SPI_MODE_MASTER;
-    SpiHandle.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_4;
+    /* APB2 = 80 MHz no L476: /16 = 5 MHz (S2-LP: maximo 10 MHz). */
+    SpiHandle.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_16;
     
     SpiHandle.Init.Direction         = SPI_DIRECTION_2LINES;
     SpiHandle.Init.CLKPhase          = SPI_PHASE_1EDGE;

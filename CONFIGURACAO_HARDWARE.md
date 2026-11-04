@@ -3,6 +3,7 @@
 O firmware configura o SPI1 pelo driver do shield em modo master full-duplex,
 8 bits, MSB first, clock idle low, captura na primeira borda e NSS por software.
 O clock SPI usa PB3; MISO/MOSI usam PA6/PA7.
+Com APB2 de 80 MHz, radio e EEPROM usam prescaler /16: SPI de 5 MHz.
 
 | Pino/periferico | Funcao |
 | --- | --- |
@@ -27,20 +28,31 @@ O botao B1 transmite o comando `0xAA` em 915-928 MHz, cifrado com ECC (ver
 abaixo), com salto de frequencia em 50 canais. O recebimento de um comando
 autentico alterna o LD2.
 
-## Radio: alcance maximo e salto de frequencia
+## Radio: perfil atual e salto de frequencia
 
 Parametros em `Inc/aquaalert_rf.h`; detalhes e racional em `DOCUMENTACAO.md`.
 
-- **Potencia:** o S2-LP entrega +12 dBm ao FEM SKY66420 (ganho 16 dB), o que
-  da ~+27 dBm na antena. Limite absoluto na entrada do FEM: +17 dBm.
-- **Sensibilidade:** 2-GFSK 4,8 kbps, desvio 4,8 kHz, filtro de RX 60 kHz,
-  FEC ligado, preambulo 8 bytes, CRC 16 bits, LNA do FEM em RX.
+- **Potencia:** drive de -4 dBm no S2-LP (registrador PA = 0x25, como no
+  firmware anterior). O drive experimental de +12 dBm apresentou corrupcao
+  de registradores durante TX na bancada e ficou desativado.
+- **Camada fisica:** 2-FSK 38,4 kbps, desvio 20 kHz, filtro de RX 100 kHz,
+  FEC desligado, preambulo 4 bytes, CRC 8 bits, LNA do FEM em RX.
 - **Salto de frequencia:** 50 canais de ~250 kHz entre 915,375 e ~927,56 MHz.
-  Cada alerta e enviado uma vez em cada canal (ordem pseudoaleatoria, ~8 s por
-  destino). O receptor escuta um canal sorteado e troca a cada 10 min.
+  Cada alerta e enviado uma vez em cada canal (ordem pseudoaleatoria).
+  O tempo depende da taxa e do CSMA. O receptor escuta um canal sorteado
+  e troca a cada 10 min.
 - **Ocupacao:** no maximo 0,4 s por canal a cada 20 s. Se o botao for apertado
   de novo antes disso, o alerta fica pendente e sai assim que a janela liberar.
 - Antena com ganho acima de 6 dBi: reduzir `AA_FEM_DRIVE_DBM` na mesma medida.
+
+Validacao de bancada (2026-11-04): node1 e node2 com o mesmo arquivo de
+chaves, 50 transmissoes sem falhas em cada sentido, um quadro autenticado
+recebido por cada placa e LD2 alternado em ambas. O alcance em campo precisa
+ser medido novamente. Os filtros de endereco do radio ficam desativados,
+pois a origem/destino sao verificados pelo `secure_link`.
+
+Diagnostico adicional: `gTxTimeout`, `gTxCcaBusy` e `gTxFifoError` distinguem
+as causas de falha de envio; `gTxOk` nao e uma confirmacao de entrega.
 
 ## Comunicacao cifrada (ECC)
 

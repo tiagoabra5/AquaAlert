@@ -96,7 +96,8 @@ void EepromSpiInitialization(void)
                                 
     EepromSpiHandle.Instance               = EEPROM_SPI_PERIPH_NB;
     EepromSpiHandle.Init.Mode              = SPI_MODE_MASTER;
-    EepromSpiHandle.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_4;
+    /* Mesmo SPI1 do radio: manter 5 MHz com APB2 de 80 MHz no L476. */
+    EepromSpiHandle.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_16;
     
     EepromSpiHandle.Init.Direction         = SPI_DIRECTION_2LINES;
     EepromSpiHandle.Init.CLKPhase          = SPI_PHASE_1EDGE;

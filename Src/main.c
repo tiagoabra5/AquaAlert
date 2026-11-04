@@ -81,6 +81,9 @@ volatile uint32_t  gSweeps = 0;      /* alertas enviados (varreduras completas) 
 volatile uint32_t  gSweepDeferred = 0; /* alertas adiados pelo limite de ocupacao do canal */
 volatile uint8_t   gParkChannel = 0; /* canal em que este no esta escutando */
 volatile int32_t   gLastRssi = 0;    /* RSSI (dBm, na entrada do S2-LP) do ultimo quadro aceito */
+volatile uint32_t  gTxTimeout = 0;
+volatile uint32_t  gTxCcaBusy = 0;
+volatile uint32_t  gTxFifoError = 0;
 
 /* Diagnostico do front-end (FEM): adicione em Live Expressions no depurador.
  * gRangeExt : 3 = SKY66420 reconhecido; 0 = nenhum extensor de alcance detectado.
@@ -246,8 +249,7 @@ static void RadioInitAll(void)
   S2LPRadioSetChannelSpace(AA_FHSS_SPACING_HZ);
   S2LPRadioSetChannel(0);
 
-  /* Potencia: com o FEM, o S2-LP entrega AA_FEM_DRIVE_DBM na entrada TX do
-   * SKY66420 (ganho 16 dB -> ~+27 dBm na antena). Sem FEM, usa o S2-LP no maximo. */
+  /* Potencia do perfil ativo em aquaalert_rf.h. Sem FEM, usa o S2-LP sozinho. */
   S2LPRadioSetMaxPALevel(S_DISABLE);
   if (S2LPManagementGetRangeExtender() == RANGE_EXT_NONE)
   {
@@ -260,6 +262,20 @@ static void RadioInitAll(void)
   S2LPRadioSetPALevelMaxIndex(AA_PA_INDEX);
 
   S2LPPktBasicInit(&xAppBasicInit);
+  /* O endereco e autenticado pelo secure_link; o pacote de RF nao tem
+   * campo de endereco. Nao deixar filtros de endereco do chip ativos. */
+  uint8_t filters;
+  S2LPSpiReadRegisters(PCKT_FLT_OPTIONS_ADDR, 1, &filters);
+  filters &= ~(SOURCE_ADDR_FLT_REGMASK | DEST_VS_BROADCAST_ADDR_REGMASK
+               | DEST_VS_MULTICAST_ADDR_REGMASK | DEST_VS_SOURCE_ADDR_REGMASK);
+  S2LPSpiWriteRegisters(PCKT_FLT_OPTIONS_ADDR, 1, &filters);
+  /* Com FEC, o S2-LP transmite o sync secundario automaticamente. O RX
+   * precisa reconhecer esse sync para ativar o decodificador de FEC. */
+  if (AA_FEC == S_ENABLE)
+  {
+    S2LPSetDualSyncWords(~AA_SYNC_WORD);
+    S2LPPacketHandlerSelectSecondarySync(S_ENABLE);
+  }
   ConfigureRxPath();
 
 
@@ -336,6 +352,12 @@ static void TransmitOnChannel(uint8_t channel, uint8_t *frame, uint8_t len)
     }
     if (xIrqStatus.IRQ_MAX_BO_CCA_REACH)
     {
+      gTxCcaBusy++;
+      break;
+    }
+    if (xIrqStatus.IRQ_TX_FIFO_ERROR)
+    {
+      gTxFifoError++;
       break;
     }
   } while ((HAL_GetTick() - start) < AA_TX_TIMEOUT_MS);
@@ -347,6 +369,10 @@ static void TransmitOnChannel(uint8_t channel, uint8_t *frame, uint8_t len)
   else
   {
     gTxFail++;
+    if (!xIrqStatus.IRQ_MAX_BO_CCA_REACH && !xIrqStatus.IRQ_TX_FIFO_ERROR)
+    {
+      gTxTimeout++;
+    }
   }
 }
 
